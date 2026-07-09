@@ -1,0 +1,32 @@
+# Secret files
+.env
+.env*.local
+
+# Markdown files
+*.md
+
+# Unnecessary design, planning, and helper files
+*.pdf
+*.xlsx
+*.txt
+excel_dump.json
+esp32/
+
+# Python cache & virtual environment files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+.pytest_cache/
+
+# Runtime databases & user-uploaded media files
+backend/app/data/
+backend/app/static/audio/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini

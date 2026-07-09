@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schönherz Mátrix Mini</title>
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="stars-bg"></div>
+    
+    <header class="app-header">
+        <div class="header-logo">
+            
+            <h1>Schönherz Mátrix <span class="accent-text">Mini</span></h1>
+        </div>
+        <div class="status-panel">
+            <div class="status-indicator idle" id="statusIndicator">
+                <span class="indicator-dot"></span>
+                <span class="indicator-text" id="statusText">KÉSZENLÉT</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-layout">
+        <!-- Bal oldal: Schönherz épület szimuláció -->
+        <section class="facade-section">
+            <div class="facade-card glass-panel">
+                <div class="facade-header">
+                    <h2>Épület Előnézet</h2>
+                    <span class="resolution-badge">48 &times; 96 LED (HUB75)</span>
+                </div>
+                <div class="facade-container">
+                    <canvas id="facadeCanvas" width="384" height="768"></canvas>
+                </div>
+                <div class="facade-legend">
+                    <span class="legend-item"><span class="legend-color p-color"></span> Aktív (Animáció)</span>
+                    <span class="legend-item"><span class="legend-color x-color"></span> Statikus lámpa</span>
+                    <span class="legend-item"><span class="legend-color bg-color"></span> Falszerkezet</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Jobb oldal: Vezérlő pult -->
+        <section class="controls-section">
+            <!-- 1. Now Playing -->
+            <div class="control-card glass-panel highlight-border" id="nowPlayingCard">
+                <div class="card-header">
+                    <h3>Éppen futó műsor</h3>
+                    <div class="audio-badge" id="audioBadge" style="display: none;">AUDIÓ AKTÍV</div>
+                </div>
+                <div class="now-playing-content">
+                    <div class="track-info">
+                        <div class="track-title" id="currentTrackTitle">Készenléti szimuláció</div>
+                        <div class="track-artist" id="currentTrackStatus">Ablakfények véletlenszerű villódzása</div>
+                    </div>
+                    
+                    <div class="progress-container">
+                        <span class="time-label" id="timeElapsed">00:00</span>
+                        <div class="progress-bar-bg" id="progressBarBg">
+                            <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+                        </div>
+                        <span class="time-label" id="timeTotal">00:00</span>
+                    </div>
+
+                    <div class="playback-controls">
+                        <button class="control-btn" id="togglePlayBtn" title="Lejátszás / Szünet" disabled>
+                            <svg viewBox="0 0 24 24" class="btn-icon"><path d="M8 5v14l11-7z"/></svg>
+                        </button>
+                        <button class="control-btn" id="skipBtn" title="Következő (Kihagyás)" disabled>
+                            <svg viewBox="0 0 24 24" class="btn-icon"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                        </button>
+                        <div class="volume-control" id="volumeControlContainer" style="display: none;">
+                            <button class="volume-btn" id="muteBtn">
+                                <svg viewBox="0 0 24 24" class="btn-icon" id="volumeIcon"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+                            </button>
+                            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.05" value="0.5">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Feltöltés -->
+            <div class="control-card glass-panel">
+                <div class="card-header">
+                    <h3>Animáció Feltöltése</h3>
+                </div>
+                <div class="upload-zone" id="uploadZone">
+                    <input type="file" id="fileInput" accept=".q4x" style="display: none;">
+                    <div class="upload-icon">
+                        <svg viewBox="0 0 24 24" class="upload-svg"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                    </div>
+                    <div class="upload-text">
+                        <p class="primary-text">Húzz be egy <span class="accent-text font-mono">.q4x</span> fájlt ide</p>
+                        <p class="secondary-text">vagy kattints a böngészéshez</p>
+                    </div>
+                </div>
+                <div class="upload-progress-container" id="uploadProgressContainer" style="display: none;">
+                    <div class="upload-progress-bar">
+                        <div class="upload-progress-fill" id="uploadProgressFill"></div>
+                    </div>
+                    <div class="upload-progress-status" id="uploadProgressStatus">Feltöltés folyamatban... 0%</div>
+                </div>
+            </div>
+
+            <!-- 3. Sorban álló animációk (Várólista) -->
+            <div class="control-card glass-panel scrollable-card">
+                <div class="card-header">
+                    <h3>Lejátszási sor</h3>
+                    <span class="counter-badge" id="queueCount">0 darab</span>
+                </div>
+                <div class="queue-list" id="queueList">
+                    <div class="empty-state">Nincs animáció a várólistában.</div>
+                </div>
+            </div>
+
+            <!-- 4. Könyvtár -->
+            <div class="control-card glass-panel scrollable-card flex-grow">
+                <div class="card-header">
+                    <h3>Feltöltött animációk</h3>
+                    <span class="counter-badge" id="libraryCount">0 darab</span>
+                </div>
+                <div class="library-list" id="libraryList">
+                    <div class="empty-state">Még nem töltöttek fel animációt.</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>&copy; 2026 Schönherz Mátrix Mini</p>
+    </footer>
+
+    <!-- Audio Player for Local Sync -->
+    <audio id="localAudio" style="display: none;"></audio>
+
+    <script src="script.js"></script>
+</body>
+</html>
