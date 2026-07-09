@@ -435,10 +435,11 @@ async def upload_animation(file: UploadFile = File(...)):
             # Serves via FastAPI static directory
             audio_url = f"/static/audio/{audio_filename}"
             
-        # Add metadata to DB
+        display_name = file.filename[:-4] if file.filename else (parsed["name"] or "Névtelen")
+        
         metadata = {
             "id": anim_id,
-            "name": parsed["name"] or file.filename[:-4],
+            "name": display_name,
             "duration_ms": parsed["duration_ms"],
             "audio_url": audio_url,
             "uploaded_at": time.time()
@@ -447,9 +448,8 @@ async def upload_animation(file: UploadFile = File(...)):
         animations_db[anim_id] = metadata
         save_db()
         
-        # Cache the parsed frames
         loaded_animations[anim_id] = {
-            "name": parsed["name"],
+            "name": display_name,
             "duration_ms": parsed["duration_ms"],
             "frames": parsed["frames"]
         }

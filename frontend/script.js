@@ -175,28 +175,30 @@ function renderFacade(pixelBytes) {
 // -------------------------------------------------------------
 // POLLING API STATUS
 // -------------------------------------------------------------
-async function updateFrameAndStatus() {
-    try {
-        // Fetch current frame binary & playback details
-        const res = await fetch('/api/esp/current-frame/json');
-        if (!res.ok) throw new Error('API error');
-        
-        const data = await res.json();
-        
-        // Decode base64 pixels
-        const binaryString = atob(data.pixels);
-        const pixelBytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            pixelBytes[i] = binaryString.charCodeAt(i);
+function initPreviewWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/esp/ws`;
+    const socket = new WebSocket(wsUrl);
+    socket.binaryType = 'arraybuffer';
+
+    socket.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+            const pixelBytes = new Uint8Array(event.data);
+            renderFacade(pixelBytes);
         }
-        
-        // Render
-        renderFacade(pixelBytes);
-        
-        // Update playback status
-        const status = data.status;
-        updatePlaybackUI(status);
-        
+    };
+
+    socket.onclose = () => {
+        setTimeout(initPreviewWebSocket, 1000);
+    };
+}
+
+async function fetchPlaybackStatus() {
+    try {
+        const res = await fetch('/api/playback/status');
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        updatePlaybackUI(data.status);
     } catch (e) {
         console.error('Failed to fetch status:', e);
     }
@@ -590,15 +592,13 @@ async function handleUpload(file) {
 // -------------------------------------------------------------
 // TIMER LOOPS INITIALIZATION
 // -------------------------------------------------------------
-// 25 FPS update for the simulated facade preview
-setInterval(updateFrameAndStatus, 40);
+setInterval(fetchPlaybackStatus, 500);
 
-// Fetch queue and library data every 3 seconds
 setInterval(fetchLibraryAndQueue, 3000);
 
-// Initial fetches
 fetchLibraryAndQueue();
-updateFrameAndStatus();
+fetchPlaybackStatus();
+initPreviewWebSocket();
 
 // -------------------------------------------------------------
 // LIVE RELOAD
