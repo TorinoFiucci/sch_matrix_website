@@ -139,31 +139,41 @@ function renderFacade(pixelBytes) {
             const py = y * PIXEL_SIZE;
             
             if (isWindowMap[idx]) {
-                // If it is a window
+                ctx.fillStyle = '#1a1b24';
+                ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
+                if (y % 4 === 2) {
+                    ctx.fillStyle = '#14151b';
+                    ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
+                }
+                
                 if (isLit) {
-                    // Window is ON (glowing)
                     ctx.shadowBlur = 8;
                     ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
                     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
                     ctx.fillRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
-                    
-                    // Reset shadow
                     ctx.shadowBlur = 0;
                 } else {
-                    // Window is OFF (dark glass)
                     ctx.fillStyle = '#090a0f';
                     ctx.fillRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
-                    // Subtle window border
                     ctx.strokeStyle = 'rgba(255,255,255,0.03)';
                     ctx.strokeRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
                 }
             } else {
-                // It is a building wall
-                ctx.fillStyle = '#1a1b24';
+                if (x === 23 || x === 24) {
+                    ctx.fillStyle = '#16171f';
+                } else {
+                    ctx.fillStyle = '#1a1b24';
+                }
                 ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
                 
-                // Add concrete lines on wall blocks to make it look structural
-                if (x % 3 === 2 || y % 4 === 2) {
+                let isWallCol = false;
+                if (x < 23) {
+                    isWallCol = (x % 3 === 2);
+                } else if (x >= 25) {
+                    isWallCol = ((x - 25) % 3 === 2);
+                }
+                
+                if (isWallCol || y % 4 === 2) {
                     ctx.fillStyle = '#14151b';
                     ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
                 }

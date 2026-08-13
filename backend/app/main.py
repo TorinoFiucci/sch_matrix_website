@@ -98,34 +98,51 @@ def save_db():
 # -------------------------------------------------------------
 def init_windows():
     global windows, window_states
-    all_coords = set()
-    for (ax, ay), (px, py) in ANIMATABLE_MAPPING:
-        all_coords.add((px, py))
-    for px, py in STATIC_PIXELS:
-        all_coords.add((px, py))
-
-    visited = set()
+    
+    rooms_cols = []
+    for r in range(1, 9):
+        if r <= 4:
+            w1_col = 3 * (2 * (r - 1))
+            w2_col = 3 * (2 * (r - 1) + 1)
+        else:
+            r_prime = r - 5
+            w1_col = 25 + 3 * (2 * r_prime)
+            w2_col = 25 + 3 * (2 * r_prime + 1)
+        rooms_cols.append([w1_col, w1_col + 1, w2_col, w2_col + 1])
+        
     found_windows = []
-
-    for px, py in sorted(all_coords):
-        if (px, py) not in visited:
+    
+    for fo in range(13):
+        y_base = 3 + 4 * fo
+        for cols in rooms_cols:
             comp = []
-            queue = [(px, py)]
-            visited.add((px, py))
-            while queue:
-                cx, cy = queue.pop(0)
-                comp.append((cx, cy))
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    nx, ny = cx + dx, cy + dy
-                    if (nx, ny) in all_coords and (nx, ny) not in visited:
-                        visited.add((nx, ny))
-                        queue.append((nx, ny))
+            for y in [y_base, y_base + 1]:
+                for x in cols:
+                    comp.append((x, y))
             found_windows.append(comp)
-
+            
+    for y_base in [55, 59, 63, 67]:
+        for cols in rooms_cols:
+            comp = []
+            for y in [y_base, y_base + 1]:
+                for x in cols:
+                    comp.append((x, y))
+            found_windows.append(comp)
+            
+    large_hall_comp = []
+    for cols in rooms_cols:
+        for x in cols:
+            large_hall_comp.append((x, 71))
+        for x in cols:
+            large_hall_comp.append((x, 75))
+        for y in [78, 79, 80]:
+            for x in cols:
+                large_hall_comp.append((x, y))
+    found_windows.append(large_hall_comp)
+        
     windows = found_windows
-    # Set initial random states: 20-30% of windows turned ON
     window_states = [random.random() < 0.25 for _ in range(len(windows))]
-    print(f"Identified {len(windows)} individual facade windows.")
+    print(f"Initialized {len(windows)} facade window components (rooms).")
 
 # -------------------------------------------------------------
 # IDLE SIMULATION UPDATE
