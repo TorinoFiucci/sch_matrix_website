@@ -207,7 +207,12 @@ async def broadcast_frame_ws(frame_bytes: bytes):
 async def playback_loop():
     global current_physical_frame, active_playback, play_queue
     print("Playback engine started.")
-    
+
+    # Deadline-alapu utemezes: a kovetkezo kepkocka abszolut idopontja.
+    # None = a kovetkezo kepkockanal ujra kell inditani (idle, start, stop utan).
+    next_frame_at = None
+    dropped_frames = 0
+
     while True:
         try:
             anim_id = active_playback["animation_id"]
@@ -246,7 +251,8 @@ async def playback_loop():
                         active_playback["elapsed_time_ms"] = 0
                         active_playback["is_playing"] = True
                         active_playback["is_idle"] = False
-                        
+                        next_frame_at = None  # friss utemezes az uj animaciohoz
+
                         audio_url = animations_db[next_id].get("audio_url")
                         active_playback["audio_url"] = audio_url
                         
@@ -255,6 +261,7 @@ async def playback_loop():
                         continue
                 
                 # Update and sleep for idle mode
+                next_frame_at = None  # az idle 0.5s-os ritmusat ne oroklje a lejatszas
                 update_idle_frame()
                 await broadcast_frame_ws(bytes(current_physical_frame))
                 await asyncio.sleep(0.5)  # Update idle simulation twice a second
@@ -274,6 +281,7 @@ async def playback_loop():
                     print(f"Finished playback of: {active_playback['name']}")
                     active_playback["animation_id"] = None
                     active_playback["is_playing"] = False
+                    next_frame_at = None
                     continue
                 
                 # Render current frame
@@ -296,10 +304,27 @@ async def playback_loop():
                 current_physical_frame[:] = new_frame
                 await broadcast_frame_ws(bytes(current_physical_frame))
                 
-                # Sleep for the frame duration
-                sleep_seconds = max(0.01, frame_duration_ms / 1000.0)
-                await asyncio.sleep(sleep_seconds)
-                
+                # Sleep until the next frame's deadline. Absolute scheduling, so the
+                # render + broadcast time does not add onto the frame period.
+                frame_seconds = max(0.001, frame_duration_ms / 1000.0)
+                if next_frame_at is None:
+                    next_frame_at = time.monotonic()
+                next_frame_at += frame_seconds
+
+                delay = next_frame_at - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                else:
+                    # Behind schedule. Don't let the debt accumulate: if we are more
+                    # than a full frame late, resync the deadline to now.
+                    if -delay > frame_seconds:
+                        dropped_frames += 1
+                        if dropped_frames % 25 == 1:
+                            print(f"Playback behind schedule by {-delay * 1000:.0f} ms "
+                                  f"({dropped_frames} late frames so far)")
+                        next_frame_at = time.monotonic()
+                    await asyncio.sleep(0)  # yield to the event loop
+
                 # Advance frame index
                 if active_playback["is_playing"]:
                     active_playback["frame_index"] += 1

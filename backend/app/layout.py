@@ -1,4 +1,4 @@
-# Auto-generated Sch�nherz Matrix Layout Mappings
+# Auto-generated Schönherz Matrix Layout Mappings
 # 0-indexed coordinates
 # Width = 48 (X: 0..47)
 # Height = 96 (Y: 0..95)
