@@ -5,6 +5,7 @@ import asyncio
 import time
 import base64
 import random
+import socket
 from typing import List, Dict, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,49 +97,50 @@ def save_db():
 # -------------------------------------------------------------
 # FACADE WINDOW GROUPING (BFS)
 # -------------------------------------------------------------
-def init_windows():
-    global windows, window_states
-    
-    rooms_cols = []
+# The right half of the facade sits one column left of the left half's grid, so
+# the elevator gap is a single column (x=23) all the way up. Mirrors app/layout.py.
+RIGHT_HALF_X = 24
+
+def _build_rooms_cols():
+    """Column groups of the 8 rooms. Each room is two adjacent windows,
+    each window two columns wide."""
+    rooms = []
     for r in range(1, 9):
         if r <= 4:
             w1_col = 3 * (2 * (r - 1))
             w2_col = 3 * (2 * (r - 1) + 1)
         else:
             r_prime = r - 5
-            w1_col = 25 + 3 * (2 * r_prime)
-            w2_col = 25 + 3 * (2 * r_prime + 1)
-        rooms_cols.append([w1_col, w1_col + 1, w2_col, w2_col + 1])
-        
+            w1_col = RIGHT_HALF_X + 3 * (2 * r_prime)
+            w2_col = RIGHT_HALF_X + 3 * (2 * r_prime + 1)
+        rooms.append([w1_col, w1_col + 1, w2_col, w2_col + 1])
+    return rooms
+
+ROOMS_COLS = _build_rooms_cols()
+
+# Levels below the animated floors, as (first_row, height). Mirrors app/layout.py.
+STATIC_LEVELS = [(56, 2), (60, 2), (64, 2), (68, 2), (72, 2), (82, 1), (85, 3), (90, 2)]
+
+# The one three-row level is the hall: it lights as a single unit rather than
+# being split into rooms.
+HALL_HEIGHT = 3
+
+def init_windows():
+    global windows, window_states
+
     found_windows = []
-    
-    for fo in range(13):
-        y_base = 3 + 4 * fo
-        for cols in rooms_cols:
-            comp = []
-            for y in [y_base, y_base + 1]:
-                for x in cols:
-                    comp.append((x, y))
-            found_windows.append(comp)
-            
-    for y_base in [55, 59, 63, 67]:
-        for cols in rooms_cols:
-            comp = []
-            for y in [y_base, y_base + 1]:
-                for x in cols:
-                    comp.append((x, y))
-            found_windows.append(comp)
-            
-    large_hall_comp = []
-    for cols in rooms_cols:
-        for x in cols:
-            large_hall_comp.append((x, 71))
-        for x in cols:
-            large_hall_comp.append((x, 75))
-        for y in [78, 79, 80]:
-            for x in cols:
-                large_hall_comp.append((x, y))
-    found_windows.append(large_hall_comp)
+
+    # Animated floors are row pairs (4,5), (8,9), ... (52,53)
+    levels = [(4 + 4 * fo, 2) for fo in range(13)] + STATIC_LEVELS
+
+    for y0, height in levels:
+        rows = range(y0, y0 + height)
+        if height == HALL_HEIGHT:
+            found_windows.append([(x, y) for y in rows
+                                  for cols in ROOMS_COLS for x in cols])
+        else:
+            for cols in ROOMS_COLS:
+                found_windows.append([(x, y) for y in rows for x in cols])
         
     windows = found_windows
     window_states = [random.random() < 0.25 for _ in range(len(windows))]
@@ -182,24 +184,128 @@ def update_idle_frame():
                 
     current_physical_frame[:] = new_frame
 
-# Active websocket clients
-active_websockets: List[WebSocket] = []
+# Connected frame consumers (ESP32 panels and browser previews)
+frame_clients: List["FrameClient"] = []
 live_reload_websockets: List[WebSocket] = []
 
-async def broadcast_frame_ws(frame_bytes: bytes):
-    if not active_websockets:
-        return
-    tasks = []
-    for ws in list(active_websockets):
-        tasks.append(ws.send_bytes(frame_bytes))
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for ws, result in zip(list(active_websockets), results):
-            if isinstance(result, Exception):
-                try:
-                    active_websockets.remove(ws)
-                except ValueError:
-                    pass
+# How much unsent data a client may have queued before we start dropping frames
+# for it. Two frames is enough to keep a healthy link saturated without letting
+# a slow one build up a backlog.
+MAX_BUFFERED_BYTES = 2 * BUFFER_SIZE
+
+# The check above only sees what the kernel has already refused to accept, so a
+# large socket send buffer would hide seconds of backlog from us. Capping it
+# keeps the in-flight data to a few frames. On a LAN this is far more than the
+# bandwidth-delay product needs, so it costs a healthy client nothing.
+SOCKET_SEND_BUFFER_BYTES = 64 * 1024
+
+
+def _find_transport(websocket: WebSocket):
+    """Dig out the asyncio transport behind a websocket connection.
+
+    Neither ASGI nor Starlette exposes any flow control, and Starlette wraps
+    uvicorn's send callable in a couple of closures, so walking down to the
+    transport is the only way to see how much data is actually backed up for a
+    client. Returns None on a server that does not work this way, in which case
+    the one-slot mailbox below is the only protection.
+    """
+    seen = set()
+    stack = [websocket._send]
+    while stack:
+        obj = stack.pop()
+        if id(obj) in seen:
+            continue
+        seen.add(id(obj))
+
+        owner = getattr(obj, "__self__", None)
+        if owner is not None and getattr(owner, "transport", None) is not None:
+            return owner.transport
+
+        for cell in getattr(obj, "__closure__", None) or ():
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if getattr(value, "transport", None) is not None:
+                return value.transport
+            if callable(value):
+                stack.append(value)
+    return None
+
+
+class FrameClient:
+    """One connected display (ESP32 or browser preview).
+
+    Holds at most one pending frame. If the client has not taken the previous
+    frame yet, the new one replaces it instead of queueing behind it, so a slow
+    client falls behind in time but never builds up an unbounded backlog --
+    it simply shows fewer frames per second, always the most recent ones.
+    """
+
+    def __init__(self, websocket: WebSocket):
+        self.websocket = websocket
+        self._pending: Optional[bytes] = None
+        self._wakeup = asyncio.Event()
+        self.sent = 0
+        self.dropped = 0
+        self.transport = _find_transport(websocket)
+        self._limit_send_buffer()
+
+    def _limit_send_buffer(self):
+        """Shrink the kernel send buffer so a backlog shows up where we can see it."""
+        try:
+            sock = self.transport.get_extra_info("socket")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_SEND_BUFFER_BYTES)
+        except Exception:
+            pass
+
+    def _write_buffer_size(self) -> Optional[int]:
+        """Bytes still queued for this connection, or None if we cannot tell."""
+        try:
+            return self.transport.get_write_buffer_size()
+        except Exception:
+            return None
+
+    def offer(self, frame_bytes: bytes):
+        """Hand the newest frame to this client, discarding any unsent one.
+
+        If the socket is already backed up by more than MAX_BUFFERED_BYTES, the
+        frame is dropped outright: a display that cannot keep up should show the
+        newest frame late by one frame, not every frame late by a minute.
+        """
+        queued = self._write_buffer_size()
+        if queued is not None and queued > MAX_BUFFERED_BYTES:
+            self.dropped += 1
+            return
+        if self._pending is not None:
+            self.dropped += 1
+        self._pending = frame_bytes
+        self._wakeup.set()
+
+    async def run(self):
+        """Keep sending whatever frame is pending until the socket dies."""
+        try:
+            while True:
+                await self._wakeup.wait()
+                self._wakeup.clear()
+                frame, self._pending = self._pending, None
+                if frame is not None:
+                    await self.websocket.send_bytes(frame)
+                    self.sent += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Wake the receive side so the connection gets cleaned up there
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+
+
+def broadcast_frame_ws(frame_bytes: bytes):
+    """Offer a frame to every connected client. Never blocks on a slow one."""
+    for client in frame_clients:
+        client.offer(frame_bytes)
 
 # -------------------------------------------------------------
 # PLAYBACK ENGINE (BACKGROUND TASK)
@@ -263,7 +369,7 @@ async def playback_loop():
                 # Update and sleep for idle mode
                 next_frame_at = None  # az idle 0.5s-os ritmusat ne oroklje a lejatszas
                 update_idle_frame()
-                await broadcast_frame_ws(bytes(current_physical_frame))
+                broadcast_frame_ws(bytes(current_physical_frame))
                 await asyncio.sleep(0.5)  # Update idle simulation twice a second
                 
             else:
@@ -302,7 +408,7 @@ async def playback_loop():
                         new_frame[phys_offset+2] = pixel_data[anim_offset+2]
                 
                 current_physical_frame[:] = new_frame
-                await broadcast_frame_ws(bytes(current_physical_frame))
+                broadcast_frame_ws(bytes(current_physical_frame))
                 
                 # Sleep until the next frame's deadline. Absolute scheduling, so the
                 # render + broadcast time does not add onto the frame period.
@@ -570,11 +676,13 @@ def get_esp_current_frame():
 @app.websocket("/api/esp/ws")
 async def esp_websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    active_websockets.append(websocket)
+    client = FrameClient(websocket)
+    frame_clients.append(client)
     print(f"ESP32 connected via WebSocket: {websocket.client}")
+    sender = asyncio.create_task(client.run())
     try:
         # Send the current state immediately upon connection
-        await websocket.send_bytes(bytes(current_physical_frame))
+        client.offer(bytes(current_physical_frame))
         while True:
             # Keep connection open. If client sends data, just discard it.
             # If client disconnects, receive_bytes() raises WebSocketDisconnect.
@@ -585,9 +693,12 @@ async def esp_websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error: {e}")
     finally:
         try:
-            active_websockets.remove(websocket)
+            frame_clients.remove(client)
         except ValueError:
             pass
+        sender.cancel()
+        print(f"Client {websocket.client}: {client.sent} frames sent, "
+              f"{client.dropped} stale frames dropped")
 
 # 4. Live Reload WebSocket endpoint: notifies clients when frontend source files change
 @app.websocket("/api/live-reload/ws")

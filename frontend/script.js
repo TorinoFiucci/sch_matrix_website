@@ -38,10 +38,6 @@ const libraryList = document.getElementById('libraryList');
 const queueCount = document.getElementById('queueCount');
 const libraryCount = document.getElementById('libraryCount');
 
-// Layout Cache (will be dynamically detected from the grid)
-let isWindowMap = new Uint8Array(PHYSICAL_WIDTH * PHYSICAL_HEIGHT);
-let windowMapInitialized = false;
-
 // -------------------------------------------------------------
 // HELPER FUNCTIONS
 // -------------------------------------------------------------
@@ -53,133 +49,49 @@ function formatTime(ms) {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Check if a pixel is structurally a window on the Schonherz facade
-function initWindowMap() {
-    for (let y = 0; y < PHYSICAL_HEIGHT; y++) {
-        for (let x = 0; x < PHYSICAL_WIDTH; x++) {
-            let isWin = false;
-            
-            // Left Half windows (w_col: 0..7)
-            if (x >= 0 && x <= 22) {
-                if (x % 3 !== 2) isWin = true;
-            }
-            // Right Half windows (w_col: 8..15)
-            else if (x >= 25 && x <= 47) {
-                if ((x - 25) % 3 !== 2) isWin = true;
-            }
-            
-            // Floor checks
-            let onActiveFloor = false;
-            
-            // Floors 6 to 18 (P pixels, rows 4 to 53)
-            if (y >= 3 && y <= 52) {
-                let floorOffset = y - 3;
-                if (floorOffset % 4 === 0 || floorOffset % 4 === 1) {
-                    onActiveFloor = true;
-                }
-            }
-            // Floors -1 to 5 (X pixels, rows 55 to 80)
-            else if (y >= 55 && y <= 80) {
-                // F5: rows 55, 56 (0-indexed 55, 56 corresponds to row 56, 57 1-indexed)
-                // F4: rows 59, 60
-                // F3: rows 63, 64
-                // F2: rows 67, 68
-                // F1: row 71
-                // F0: row 75
-                // F-1: rows 78, 79, 80
-                if (y === 55 || y === 56 || 
-                    y === 59 || y === 60 || 
-                    y === 63 || y === 64 || 
-                    y === 67 || y === 68 || 
-                    y === 71 || 
-                    y === 75 || 
-                    y === 78 || y === 79 || y === 80) {
-                    onActiveFloor = true;
-                }
-            }
-            
-            isWindowMap[y * PHYSICAL_WIDTH + x] = (isWin && onActiveFloor) ? 1 : 0;
-        }
-    }
-    windowMapInitialized = true;
-}
-
 // -------------------------------------------------------------
 // RENDER LOOP
 // -------------------------------------------------------------
+// The preview is a plain LED grid: every one of the 48x96 positions is drawn,
+// lit or not. The facade's window/wall structure is deliberately NOT drawn, so
+// what you see is exactly the buffer the panel receives.
+const PIXEL_GAP = 1;              // dark gutter between neighbouring LEDs
+const COLOR_BACKDROP = '#06070a'; // panel body, shows through the gutters
+const COLOR_OFF = '#111319';      // an LED that is switched off
+
 function renderFacade(pixelBytes) {
-    if (!windowMapInitialized) {
-        initWindowMap();
+    const inner = PIXEL_SIZE - PIXEL_GAP;
+
+    // Every LED in its off state, drawn as one fill plus the gutter grid,
+    // instead of several thousand individual rectangles.
+    ctx.fillStyle = COLOR_OFF;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = COLOR_BACKDROP;
+    for (let x = 0; x < PHYSICAL_WIDTH; x++) {
+        ctx.fillRect(x * PIXEL_SIZE + inner, 0, PIXEL_GAP, canvas.height);
     }
-    
-    // Clear canvas
-    ctx.fillStyle = '#06070a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw building background structure
-    ctx.fillStyle = '#101116';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw floors separator indicators (vertical concrete bands)
-    ctx.fillStyle = '#16171f';
-    ctx.fillRect(23 * PIXEL_SIZE, 0, 2 * PIXEL_SIZE, canvas.height); // Center elevator block
-    
-    // Render pixels
+    for (let y = 0; y < PHYSICAL_HEIGHT; y++) {
+        ctx.fillRect(0, y * PIXEL_SIZE + inner, canvas.width, PIXEL_GAP);
+    }
+
+    // Then only the lit ones, so the glow is switched on just once per frame
+    ctx.shadowBlur = 8;
     for (let y = 0; y < PHYSICAL_HEIGHT; y++) {
         for (let x = 0; x < PHYSICAL_WIDTH; x++) {
-            const idx = y * PHYSICAL_WIDTH + x;
-            const offset = idx * 3;
-            
+            const offset = (y * PHYSICAL_WIDTH + x) * 3;
             const r = pixelBytes[offset];
             const g = pixelBytes[offset + 1];
             const b = pixelBytes[offset + 2];
-            const isLit = (r > 0 || g > 0 || b > 0);
-            
-            const px = x * PIXEL_SIZE;
-            const py = y * PIXEL_SIZE;
-            
-            if (isWindowMap[idx]) {
-                ctx.fillStyle = '#1a1b24';
-                ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
-                if (y % 4 === 2) {
-                    ctx.fillStyle = '#14151b';
-                    ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
-                }
-                
-                if (isLit) {
-                    ctx.shadowBlur = 8;
-                    ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
-                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                    ctx.fillRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
-                    ctx.shadowBlur = 0;
-                } else {
-                    ctx.fillStyle = '#090a0f';
-                    ctx.fillRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
-                    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-                    ctx.strokeRect(px + 1, py + 1, PIXEL_SIZE - 2, PIXEL_SIZE - 2);
-                }
-            } else {
-                if (x === 23 || x === 24) {
-                    ctx.fillStyle = '#16171f';
-                } else {
-                    ctx.fillStyle = '#1a1b24';
-                }
-                ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
-                
-                let isWallCol = false;
-                if (x < 23) {
-                    isWallCol = (x % 3 === 2);
-                } else if (x >= 25) {
-                    isWallCol = ((x - 25) % 3 === 2);
-                }
-                
-                if (isWallCol || y % 4 === 2) {
-                    ctx.fillStyle = '#14151b';
-                    ctx.fillRect(px, py, PIXEL_SIZE, PIXEL_SIZE);
-                }
-            }
+            if (r === 0 && g === 0 && b === 0) continue;
+
+            const color = `rgb(${r}, ${g}, ${b})`;
+            ctx.shadowColor = color;
+            ctx.fillStyle = color;
+            ctx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, inner, inner);
         }
     }
+    ctx.shadowBlur = 0;
 }
 
 // -------------------------------------------------------------
