@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.layout import ANIMATABLE_MAPPING, STATIC_PIXELS
 from app.parser import parse_q4x_data, MATRIX_WIDTH, MATRIX_HEIGHT
+from app.esp_stream import broadcast_esp, serve_esp
 
 app = FastAPI(title="Schönherz Mátrix Mini Controller")
 
@@ -302,10 +303,14 @@ class FrameClient:
                 pass
 
 
-def broadcast_frame_ws(frame_bytes: bytes):
-    """Offer a frame to every connected client. Never blocks on a slow one."""
+def broadcast_frame_ws(frame_bytes: bytes, smooth: bool = False):
+    """Offer a frame to every connected client. Never blocks on a slow one.
+
+    smooth: slow-changing content (idle), the ESP may cross-fade into it.
+    """
     for client in frame_clients:
         client.offer(frame_bytes)
+    broadcast_esp(frame_bytes, smooth)
 
 # -------------------------------------------------------------
 # PLAYBACK ENGINE (BACKGROUND TASK)
@@ -369,7 +374,7 @@ async def playback_loop():
                 # Update and sleep for idle mode
                 next_frame_at = None  # az idle 0.5s-os ritmusat ne oroklje a lejatszas
                 update_idle_frame()
-                broadcast_frame_ws(bytes(current_physical_frame))
+                broadcast_frame_ws(bytes(current_physical_frame), smooth=True)
                 await asyncio.sleep(0.5)  # Update idle simulation twice a second
                 
             else:
@@ -699,6 +704,12 @@ async def esp_websocket_endpoint(websocket: WebSocket):
         sender.cancel()
         print(f"Client {websocket.client}: {client.sent} frames sent, "
               f"{client.dropped} stale frames dropped")
+
+# 3b. ESP32 compact stream: only changed pixels, with per-frame acknowledgements
+# so a slow link gets fewer frames instead of a growing backlog (see esp_stream.py)
+@app.websocket("/api/esp/stream")
+async def esp_stream_endpoint(websocket: WebSocket):
+    await serve_esp(websocket, bytes(current_physical_frame))
 
 # 4. Live Reload WebSocket endpoint: notifies clients when frontend source files change
 @app.websocket("/api/live-reload/ws")
