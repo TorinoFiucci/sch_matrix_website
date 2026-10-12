@@ -11,7 +11,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=4">
 </head>
 
 <body>
@@ -40,6 +40,16 @@
                 <div class="facade-container">
                     <canvas id="facadeCanvas" width="384" height="768"></canvas>
                 </div>
+                <button class="light-switch" id="lightSwitch" role="switch" aria-checked="false">
+                    <span class="light-switch-label">
+                        <svg viewBox="0 0 24 24" class="mode-icon" aria-hidden="true">
+                            <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
+                        </svg>
+                        Villanykapcsoló mód
+                    </span>
+                    <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                </button>
+                <p class="mode-hint" id="modeHint"></p>
                 <!-- <div class="facade-legend">
                     <span class="legend-item"><span class="legend-color p-color"></span> Aktív (Animáció)</span>
                     <span class="legend-item"><span class="legend-color x-color"></span> Statikus lámpa</span>
@@ -154,7 +164,7 @@
     <!-- Audio Player for Local Sync -->
     <audio id="localAudio" style="display: none;"></audio>
 
-    <script src="script.js?v=2"></script>
+    <script src="script.js?v=4"></script>
 </body>
 
 </html>

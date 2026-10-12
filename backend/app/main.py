@@ -145,20 +145,56 @@ def init_windows():
         
     windows = found_windows
     window_states = [random.random() < 0.25 for _ in range(len(windows))]
+    window_at.clear()
+    for idx, cells in enumerate(windows):
+        for cell in cells:
+            window_at[cell] = idx
     print(f"Initialized {len(windows)} facade window components (rooms).")
+
+# -------------------------------------------------------------
+# MANUAL LIGHT SWITCHING (idle only)
+# -------------------------------------------------------------
+# Visitors may flip a window's light from the web page. The flip only lasts
+# MANUAL_OVERRIDE_SECONDS, then the window returns to the state it had, so the
+# simulation's lit ratio holds in the long run. While a window is overridden
+# the random simulation leaves it alone.
+MANUAL_OVERRIDE_SECONDS = 10.0
+
+window_at: Dict[tuple, int] = {}       # (x, y) -> window index
+window_overrides: Dict[int, dict] = {}  # window index -> {"until", "restore"}
+
+def expire_window_overrides():
+    now = time.monotonic()
+    for idx, override in list(window_overrides.items()):
+        if now >= override["until"]:
+            window_states[idx] = override["restore"]
+            del window_overrides[idx]
+
+def toggle_window(idx: int):
+    """Flip one window by hand. Flipping it back early ends the override."""
+    override = window_overrides.get(idx)
+    new_state = not window_states[idx]
+    window_states[idx] = new_state
+    if override is not None and override["restore"] == new_state:
+        del window_overrides[idx]
+    elif override is None:
+        window_overrides[idx] = {"until": time.monotonic() + MANUAL_OVERRIDE_SECONDS,
+                                 "restore": not new_state}
 
 # -------------------------------------------------------------
 # IDLE SIMULATION UPDATE
 # -------------------------------------------------------------
 def update_idle_frame():
-    global current_physical_frame
-    
+    expire_window_overrides()
+
     # 5% chance to toggle a window's state to simulate natural activity
     if random.random() < 0.15:
         # Toggle 1 to 3 random windows
         num_to_toggle = random.randint(1, 3)
         for _ in range(num_to_toggle):
             idx = random.randint(0, len(windows) - 1)
+            if idx in window_overrides:
+                continue  # someone switched it by hand, leave it alone
             # Maintain total active lights between 15% and 40%
             active_count = sum(window_states)
             active_ratio = active_count / len(windows)
@@ -172,7 +208,10 @@ def update_idle_frame():
                 # Normal toggle
                 window_states[idx] = not window_states[idx]
 
-    # Render windows to the physical buffer
+    render_idle_frame()
+
+def render_idle_frame():
+    """Draw the current window states into the physical frame buffer."""
     new_frame = bytearray(BUFFER_SIZE)
     for win_idx, win_cells in enumerate(windows):
         color = WARM_LIGHT_COLOR if window_states[win_idx] else BLACK_COLOR
@@ -557,6 +596,42 @@ def toggle_playback():
         state = "playing" if active_playback["is_playing"] else "paused"
         return {"status": "ok", "message": f"Playback is now {state}"}
     return {"status": "error", "message": "No active animation to play/pause"}
+
+@app.get("/api/idle/windows")
+def get_idle_windows():
+    """Window layout for the light switch mode: the cells of every window."""
+    return {
+        "width": PHYSICAL_WIDTH,
+        "height": PHYSICAL_HEIGHT,
+        "override_seconds": MANUAL_OVERRIDE_SECONDS,
+        "windows": [[[x, y] for x, y in cells] for cells in windows],
+    }
+
+class WindowToggleRequest(BaseModel):
+    x: int
+    y: int
+
+# async on purpose: it touches the playback state and the frame clients, which
+# belong to the event loop, so it must not run in the threadpool.
+@app.post("/api/idle/toggle")
+async def toggle_idle_window(req: WindowToggleRequest):
+    if active_playback["animation_id"] is not None:
+        raise HTTPException(status_code=409, detail="Animáció közben nem lehet villanyt kapcsolni.")
+    idx = window_at.get((req.x, req.y))
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Ezen a ponton nincs ablak.")
+
+    toggle_window(idx)
+    # Show it right away instead of waiting for the next idle tick
+    render_idle_frame()
+    broadcast_frame_ws(bytes(current_physical_frame), smooth=True)
+
+    override = window_overrides.get(idx)
+    return {
+        "window": idx,
+        "on": window_states[idx],
+        "reverts_in": round(override["until"] - time.monotonic(), 1) if override else None,
+    }
 
 @app.get("/api/animations")
 def get_animations():

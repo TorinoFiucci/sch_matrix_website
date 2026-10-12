@@ -219,6 +219,97 @@ body {
     display: block;
 }
 
+/* Light switch mode toggle */
+.light-switch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    width: 100%;
+    padding: 0.65rem 0.9rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.light-switch:hover:not(:disabled) {
+    color: var(--text-primary);
+}
+
+.light-switch-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.switch-track {
+    position: relative;
+    flex-shrink: 0;
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    transition: background 0.25s ease, border-color 0.25s ease;
+}
+
+.switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    transition: transform 0.25s ease, background 0.25s ease;
+}
+
+.light-switch[aria-checked="true"] {
+    color: var(--accent);
+    border-color: rgba(255, 184, 48, 0.15);
+}
+
+.light-switch[aria-checked="true"] .switch-track {
+    background: rgba(255, 184, 48, 0.25);
+    border-color: rgba(255, 184, 48, 0.35);
+}
+
+.light-switch[aria-checked="true"] .switch-knob {
+    transform: translateX(18px);
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.light-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.mode-icon {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.mode-hint {
+    min-height: 1.2em;
+    margin-top: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+#facadeCanvas.switch-mode {
+    cursor: pointer;
+}
+
 .facade-legend {
     display: flex;
     justify-content: center;

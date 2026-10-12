@@ -59,7 +59,10 @@ const PIXEL_GAP = 1;              // dark gutter between neighbouring LEDs
 const COLOR_BACKDROP = '#06070a'; // panel body, shows through the gutters
 const COLOR_OFF = '#111319';      // an LED that is switched off
 
+let lastFrame = null; // the most recent frame, to redraw the hover highlight
+
 function renderFacade(pixelBytes) {
+    lastFrame = pixelBytes;
     const inner = PIXEL_SIZE - PIXEL_GAP;
 
     // Every LED in its off state, drawn as one fill plus the gutter grid,
@@ -92,7 +95,128 @@ function renderFacade(pixelBytes) {
         }
     }
     ctx.shadowBlur = 0;
+
+    drawWindowHighlight();
 }
+
+// -------------------------------------------------------------
+// LIGHT SWITCH MODE
+// -------------------------------------------------------------
+// While the idle simulation runs, clicking a window flips its light. The
+// server decides which window a pixel belongs to and puts the window back
+// after a few seconds, so the simulation's balance survives in the long run.
+const lightSwitch = document.getElementById('lightSwitch');
+const modeHint = document.getElementById('modeHint');
+
+let switchModeWanted = false; // what the user picked
+let switchMode = false;       // what is in effect: only while idle
+let idleActive = true;
+let facadeWindows = [];      // window index -> [[x, y], ...]
+let windowAt = new Map();    // y * PHYSICAL_WIDTH + x -> window index
+let hoveredWindow = null;
+let overrideSeconds = 10;
+
+async function loadWindowLayout() {
+    try {
+        const res = await fetch('/api/idle/windows');
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        facadeWindows = data.windows;
+        overrideSeconds = data.override_seconds;
+        windowAt = new Map();
+        facadeWindows.forEach((cells, idx) => {
+            for (const [x, y] of cells) windowAt.set(y * PHYSICAL_WIDTH + x, idx);
+        });
+    } catch (e) {
+        console.error('Failed to load window layout:', e);
+    }
+}
+
+function setMode(enabled) {
+    switchModeWanted = enabled;
+    applyMode();
+}
+
+function applyMode() {
+    switchMode = switchModeWanted && idleActive;
+    lightSwitch.setAttribute('aria-checked', switchMode);
+    canvas.classList.toggle('switch-mode', switchMode);
+    if (!switchMode) setHoveredWindow(null);
+    // updateModeHint();
+}
+
+// function updateModeHint() {
+//     if (!idleActive) {
+//         modeHint.textContent = 'Villanyt csak készenléti módban lehet kapcsolni.';
+//     } else if (switchMode) {
+//         modeHint.textContent = `Kattints egy ablakra! ${overrideSeconds} másodperc múlva visszaáll.`;
+//     } else {
+//         modeHint.textContent = '';
+//     }
+// }
+
+// Called on every status poll: the switch only works while idle
+function setIdleAvailable(isIdle) {
+    if (isIdle === idleActive) return;
+    idleActive = isIdle;
+    lightSwitch.disabled = !isIdle;
+    applyMode();
+}
+
+function windowUnderPointer(event) {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor((event.clientX - rect.left) / rect.width * PHYSICAL_WIDTH);
+    const y = Math.floor((event.clientY - rect.top) / rect.height * PHYSICAL_HEIGHT);
+    if (x < 0 || y < 0 || x >= PHYSICAL_WIDTH || y >= PHYSICAL_HEIGHT) return null;
+    const idx = windowAt.get(y * PHYSICAL_WIDTH + x);
+    return idx === undefined ? null : { idx, x, y };
+}
+
+function setHoveredWindow(idx) {
+    if (idx === hoveredWindow) return;
+    hoveredWindow = idx;
+    if (lastFrame) renderFacade(lastFrame);
+}
+
+function drawWindowHighlight() {
+    if (!switchMode || hoveredWindow === null) return;
+    const cells = facadeWindows[hoveredWindow];
+    if (!cells) return;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+    for (const [x, y] of cells) {
+        ctx.fillRect(x * PIXEL_SIZE - 1, y * PIXEL_SIZE - 1, PIXEL_SIZE + 1, PIXEL_SIZE + 1);
+    }
+}
+
+lightSwitch.addEventListener('click', () => setMode(!switchModeWanted));
+
+canvas.addEventListener('mousemove', (e) => {
+    if (!switchMode) return;
+    const hit = windowUnderPointer(e);
+    setHoveredWindow(hit ? hit.idx : null);
+});
+
+canvas.addEventListener('mouseleave', () => setHoveredWindow(null));
+
+canvas.addEventListener('click', async (e) => {
+    if (!switchMode) return;
+    const hit = windowUnderPointer(e);
+    if (!hit) return;
+    try {
+        const res = await fetch('/api/idle/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x: hit.x, y: hit.y })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            modeHint.textContent = err.detail || 'Nem sikerült a kapcsolás.';
+        }
+        // On success the new frame arrives over the preview websocket
+    } catch (err) {
+        console.error('Failed to toggle window:', err);
+    }
+});
 
 // -------------------------------------------------------------
 // POLLING API STATUS
@@ -129,6 +253,7 @@ async function fetchPlaybackStatus() {
 function updatePlaybackUI(status) {
     // 1. Status indicator
     statusIndicator.className = 'status-indicator';
+    setIdleAvailable(status.is_idle);
     if (status.is_idle) {
         statusIndicator.classList.add('idle');
         statusText.textContent = 'KÉSZENLÉT';
@@ -521,6 +646,7 @@ setInterval(fetchLibraryAndQueue, 3000);
 fetchLibraryAndQueue();
 fetchPlaybackStatus();
 initPreviewWebSocket();
+loadWindowLayout();
 
 // -------------------------------------------------------------
 // LIVE RELOAD
